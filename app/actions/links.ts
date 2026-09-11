@@ -109,7 +109,10 @@ export async function getUserEarnings() {
 export async function getAllUsers(ownerKey?: string) {
   const session = await auth.api.getSession({ headers: await headers() })
   if (ownerKey !== process.env.OWNER_SECRET_KEY && session?.user?.role !== 'admin') return null
-  return db.select({ id: user.id, name: user.name, username: user.username, email: user.email, role: user.role, balance: user.balance, status: user.status, createdAt: user.createdAt }).from(user).orderBy(desc(user.createdAt))
+  const users = await db.select({ id: user.id, name: user.name, username: user.username, email: user.email, role: user.role, balance: user.balance, status: user.status, createdAt: user.createdAt }).from(user).orderBy(desc(user.createdAt))
+  const allLinks = await db.select({ userId: links.userId, clicks: links.clicks }).from(links)
+  const cpm = await getCPMRate()
+  return users.map((item) => { const totalClicks = allLinks.filter((link) => link.userId === item.id).reduce((sum, link) => sum + link.clicks, 0); return { ...item, totalClicks, totalRevenue: (totalClicks / 1000) * cpm } })
 }
 
 export async function getAllLinks() {
