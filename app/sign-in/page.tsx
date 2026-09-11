@@ -1,0 +1,5 @@
+import { AuthShell } from '@/components/auth-form'
+
+export default function SignInPage() {
+  return <AuthShell mode="sign-in" />
+}

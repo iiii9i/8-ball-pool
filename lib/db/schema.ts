@@ -60,13 +60,13 @@ export const links = pgTable("links", {
   slug: text("slug").notNull().unique(),
   originalUrl: text("original_url").notNull(),
   title: text("title"),
-  userId: text("user_id"), // null for anonymous links (no earnings)
+  userId: text("user_id"),
   clicks: integer("clicks").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 })
 
 export const settings = pgTable("settings", {
-  id: integer("id").primaryKey().default(1),
+  id: serial("id").primaryKey(),
   cpmRate: numeric("cpm_rate", { precision: 10, scale: 2 }).notNull().default("5.00"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 })
