@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { completeView } from '@/app/actions/links'
 import { ArrowRight, CheckCircle2, ShieldCheck } from 'lucide-react'
 
 const STAGE_ONE_SECONDS = 60
@@ -47,7 +48,7 @@ export function AdInterstitial({ destination, slug }: { destination: string; slu
     return () => window.clearTimeout(timer)
   }, [seconds])
 
-  function advance() {
+  async function advance() {
     if (adBlocker || vpnDetected) return
     if (stage === 1) {
       setStage(2)
@@ -55,6 +56,7 @@ export function AdInterstitial({ destination, slug }: { destination: string; slu
       window.scrollTo({ top: 0, behavior: 'smooth' })
       return
     }
+    await completeView(slug)
     window.location.assign(destination)
   }
 
