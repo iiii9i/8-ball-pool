@@ -13,10 +13,15 @@ const ADS = [
   { label: 'Sponsored story', title: 'Your best work starts here.', copy: 'A better digital toolkit for your everyday workflow.', accent: 'from-emerald-500 to-teal-600' },
 ]
 
-export function AdInterstitial({ destination }: { destination: string; slug: string }) {
+function adForSlug(slug: string) {
+  const hash = Array.from(slug).reduce((total, character) => total + character.charCodeAt(0), 0)
+  return ADS[hash % ADS.length]
+}
+
+export function AdInterstitial({ destination, slug }: { destination: string; slug: string }) {
   const [stage, setStage] = useState<1 | 2>(1)
   const [seconds, setSeconds] = useState(STAGE_ONE_SECONDS)
-  const [ad] = useState(() => ADS[Math.floor(Math.random() * ADS.length)])
+  const ad = adForSlug(slug)
   const [adBlocker, setAdBlocker] = useState(false)
   const [vpnDetected, setVpnDetected] = useState(false)
 
