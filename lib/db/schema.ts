@@ -68,9 +68,18 @@ export const links = pgTable("links", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 })
 
+export const linkViews = pgTable("link_views", {
+  id: serial("id").primaryKey(),
+  linkId: integer("link_id").notNull().references(() => links.id, { onDelete: "cascade" }),
+  visitorKey: text("visitor_key").notNull(),
+  completedAt: timestamp("completed_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  linkVisitorUnique: unique("link_views_link_visitor_unique").on(table.linkId, table.visitorKey),
+}))
+
 export const settings = pgTable("settings", {
   id: serial("id").primaryKey(),
-  cpmRate: numeric("cpm_rate", { precision: 10, scale: 2 }).notNull().default("5.00"),
+  cpmRate: numeric("cpm_rate", { precision: 10, scale: 2 }).notNull().default("3.00"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 })
 
@@ -84,16 +93,16 @@ export const payoutMethods = pgTable("payout_methods", {
   userMethodUnique: unique("payout_methods_user_method_unique").on(table.userId, table.method),
 }))
 
-export const payoutRequests = pgTable("payout_requests", {
+export const withdrawalRequests = pgTable("WithdrawalRequest", {
   id: serial("id").primaryKey(),
-  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  userId: text("userId").notNull().references(() => user.id, { onDelete: "cascade" }),
   amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
-  method: text("method").notNull(),
-  accountDetails: text("account_details").notNull(),
+  paymentMethod: text("paymentMethod").notNull(),
+  accountNumber: text("accountNumber").notNull(),
   status: text("status").notNull().default("pending"),
-  rejectionReason: text("rejection_reason"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  reason: text("reason"),
+  createdAt: timestamp("createdAt", { withTimezone: true }).notNull().defaultNow(),
+  reviewedAt: timestamp("reviewedAt", { withTimezone: true }),
 })
 
 export type Link = typeof links.$inferSelect

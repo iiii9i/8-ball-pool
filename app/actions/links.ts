@@ -2,7 +2,7 @@
 
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { links, settings, user, payoutMethods, payoutRequests } from '@/lib/db/schema'
+import { links, linkViews, settings, user, payoutMethods, withdrawalRequests } from '@/lib/db/schema'
 import { eq, desc, sql } from 'drizzle-orm'
 import { headers, cookies } from 'next/headers'
 import { createHash } from 'node:crypto'
@@ -92,8 +92,18 @@ export async function getLinkBySlug(slug: string) {
   return row ?? null
 }
 
-export async function registerClick(slug: string) {
-  await db.update(links).set({ clicks: sql`${links.clicks} + 1` }).where(eq(links.slug, slug))
+export async function completeView(slug: string) {
+  const [link] = await db.select({ id: links.id }).from(links).where(eq(links.slug, slug)).limit(1)
+  if (!link) return { ok: false as const }
+  const jar = await cookies()
+  let visitorKey = jar.get('sniplink_visitor')?.value
+  if (!visitorKey) {
+    visitorKey = crypto.randomUUID()
+    jar.set('sniplink_visitor', visitorKey, { httpOnly: true, secure: true, sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24 * 365 })
+  }
+  const inserted = await db.insert(linkViews).values({ linkId: link.id, visitorKey }).onConflictDoNothing().returning({ id: linkViews.id })
+  if (inserted.length) await db.update(links).set({ clicks: sql`${links.clicks} + 1` }).where(eq(links.id, link.id))
+  return { ok: true as const, counted: inserted.length > 0 }
 }
 
 export async function getUserLinks() {
@@ -104,20 +114,19 @@ export async function getUserLinks() {
 }
 
 export async function getCPMRate() {
-  const [row] = await db.select().from(settings).limit(1)
-  return row ? parseFloat(String(row.cpmRate)) : 5.0
+  const [row] = await db.select({ cpmRate: settings.cpmRate }).from(settings).where(eq(settings.id, 1)).limit(1)
+  return row ? Number(row.cpmRate) : 3
 }
 
 export async function getUserEarnings() {
   const userId = await getUserId()
   if (!userId) return null
-
-  const userLinks = await db.select().from(links).where(eq(links.userId, userId))
+  const views = await db.select({ id: linkViews.id }).from(linkViews).innerJoin(links, eq(linkViews.linkId, links.id)).where(eq(links.userId, userId))
+  const userLinks = await db.select({ id: links.id }).from(links).where(eq(links.userId, userId))
   const cpm = await getCPMRate()
-  const totalClicks = userLinks.reduce((sum, link) => sum + link.clicks, 0)
-  const earnings = (totalClicks / 1000) * cpm
-
-  return { totalClicks, earnings, cpm, linkCount: userLinks.length }
+  const totalViews = views.length
+  const earnings = (totalViews / 1000) * cpm
+  return { totalClicks: totalViews, earnings, cpm, linkCount: userLinks.length }
 }
 
 // Admin and owner functions
@@ -125,9 +134,10 @@ export async function getAllUsers() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!(await isOwner()) && session?.user?.role !== 'admin') return null
   const users = await db.select({ id: user.id, name: user.name, username: user.username, email: user.email, role: user.role, balance: user.balance, status: user.status, createdAt: user.createdAt }).from(user).orderBy(desc(user.createdAt))
-  const allLinks = await db.select({ userId: links.userId, clicks: links.clicks }).from(links)
+  const allLinks = await db.select({ userId: links.userId, linkId: links.id }).from(links)
+  const allViews = await db.select({ linkId: linkViews.linkId }).from(linkViews)
   const cpm = await getCPMRate()
-  return users.map((item) => { const totalClicks = allLinks.filter((link) => link.userId === item.id).reduce((sum, link) => sum + link.clicks, 0); return { ...item, totalClicks, totalRevenue: (totalClicks / 1000) * cpm } })
+  return users.map((item) => { const linkIds = new Set(allLinks.filter((link) => link.userId === item.id).map((link) => link.linkId)); const totalClicks = allViews.filter((view) => linkIds.has(view.linkId)).length; return { ...item, totalClicks, totalRevenue: (totalClicks / 1000) * cpm } })
 }
 
 export async function getAllLinks() {
@@ -185,9 +195,15 @@ export async function requestWithdrawal(amount: number, method: string, accountD
   const details = accountDetails.trim()
   if (!userId || !Number.isFinite(amount) || amount < 5 || amount > 100000 || !validMethods.includes(method as typeof validMethods[number]) || details.length < 4 || details.length > 300) return { ok: false, error: 'Enter a valid payout method, account detail, and amount of at least $5.' }
   const result = await db.transaction(async (tx) => {
-    const updated = await tx.update(user).set({ balance: sql`${user.balance} - ${amount.toFixed(2)}` }).where(sql`${user.id} = ${userId} AND ${user.status} = 'active' AND ${user.balance} >= ${amount.toFixed(2)}`).returning({ id: user.id })
-    if (updated.length === 0) return false
-    await tx.insert(payoutRequests).values({ userId, amount: amount.toFixed(2), method, accountDetails: details })
+    const [account] = await tx.select({ id: user.id }).from(user).where(eq(user.id, userId)).for('update').limit(1)
+    if (!account) return false
+    const [linkRows, requestRows] = await Promise.all([
+      tx.select({ id: linkViews.id }).from(linkViews).innerJoin(links, eq(linkViews.linkId, links.id)).where(eq(links.userId, userId)),
+      tx.select({ amount: withdrawalRequests.amount }).from(withdrawalRequests).where(sql`${withdrawalRequests.userId} = ${userId} AND ${withdrawalRequests.status} <> 'rejected'`),
+    ])
+    const available = (linkRows.length / 1000) * await getCPMRate() - requestRows.reduce((total, request) => total + Number(request.amount), 0)
+    if (available < amount) return false
+    await tx.insert(withdrawalRequests).values({ userId, amount: amount.toFixed(2), paymentMethod: method, accountNumber: details })
     return true
   })
   return result ? { ok: true } : { ok: false, error: 'Insufficient available balance.' }
@@ -196,24 +212,41 @@ export async function requestWithdrawal(amount: number, method: string, accountD
 export async function getUserPayoutData() {
   const userId = await getUserId()
   if (!userId) return { balance: 0, methods: [], requests: [] }
-  const [account] = await db.select({ balance: user.balance }).from(user).where(eq(user.id, userId)).limit(1)
-  const methods = await db.select().from(payoutMethods).where(eq(payoutMethods.userId, userId))
-  const requests = await db.select().from(payoutRequests).where(eq(payoutRequests.userId, userId)).orderBy(desc(payoutRequests.createdAt))
-  return { balance: Number(account?.balance ?? 0), methods, requests }
+  const [methods, requests, earnings] = await Promise.all([
+    db.select().from(payoutMethods).where(eq(payoutMethods.userId, userId)),
+    db.select().from(withdrawalRequests).where(eq(withdrawalRequests.userId, userId)).orderBy(desc(withdrawalRequests.createdAt)),
+    getUserEarnings(),
+  ])
+  const committed = requests.filter((request) => request.status !== 'rejected').reduce((total, request) => total + Number(request.amount), 0)
+  return { balance: Math.max(0, (earnings?.earnings ?? 0) - committed), methods, requests }
+}
+
+export async function getAdminWithdrawals() {
+  const session = await auth.api.getSession({ headers: await headers() })
+  if (session?.user?.role !== 'admin') return null
+  return db.select({ request: withdrawalRequests, name: user.name, username: user.username, email: user.email }).from(withdrawalRequests).innerJoin(user, eq(withdrawalRequests.userId, user.id)).orderBy(desc(withdrawalRequests.createdAt))
 }
 
 export async function getOwnerPayoutData() {
   if (!(await isOwner())) return null
-  return db.select({ request: payoutRequests, name: user.name, username: user.username, email: user.email }).from(payoutRequests).innerJoin(user, eq(payoutRequests.userId, user.id)).where(eq(payoutRequests.status, 'pending')).orderBy(desc(payoutRequests.createdAt))
+  return getAdminWithdrawals()
+}
+
+export async function reviewWithdrawal(requestId: number, decision: 'approved' | 'rejected', reason = '') {
+  const session = await auth.api.getSession({ headers: await headers() })
+  if (session?.user?.role !== 'admin' || !['approved', 'rejected'].includes(decision)) return { ok: false, error: 'Unauthorized' }
+  const [request] = await db.select({ id: withdrawalRequests.id, status: withdrawalRequests.status }).from(withdrawalRequests).where(eq(withdrawalRequests.id, requestId)).limit(1)
+  if (!request || request.status !== 'pending') return { ok: false, error: 'Request is no longer pending.' }
+  await db.update(withdrawalRequests).set({ status: decision, reason: reason.trim() || null, reviewedAt: new Date() }).where(eq(withdrawalRequests.id, requestId))
+  return { ok: true }
 }
 
 export async function reviewPayout(requestId: number, decision: 'approved' | 'rejected', reason = '') {
   if (!(await isOwner())) return { ok: false, error: 'Unauthorized' }
   const result = await db.transaction(async (tx) => {
-    const [request] = await tx.select().from(payoutRequests).where(eq(payoutRequests.id, requestId)).limit(1)
+    const [request] = await tx.select().from(withdrawalRequests).where(eq(withdrawalRequests.id, requestId)).limit(1)
     if (!request || request.status !== 'pending') return false
-    if (decision === 'rejected') await tx.update(user).set({ balance: sql`${user.balance} + ${request.amount}` }).where(eq(user.id, request.userId))
-    await tx.update(payoutRequests).set({ status: decision, rejectionReason: reason || null, reviewedAt: new Date() }).where(eq(payoutRequests.id, requestId))
+    await tx.update(withdrawalRequests).set({ status: decision, reason: reason || null, reviewedAt: new Date() }).where(eq(withdrawalRequests.id, requestId))
     return true
   })
   return result ? { ok: true } : { ok: false, error: 'Request is no longer pending.' }
