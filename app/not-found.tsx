@@ -1,5 +1,4 @@
 import Link from "next/link"
-import { Button } from "@/components/ui/button"
 import { LinkIcon } from "lucide-react"
 
 export default function NotFound() {
@@ -12,9 +11,7 @@ export default function NotFound() {
       <p className="max-w-sm text-pretty text-muted-foreground">
         This short link doesn&apos;t exist or may have expired. Try creating a new one.
       </p>
-      <Button asChild>
-        <Link href="/">Create a short link</Link>
-      </Button>
+      <Link href="/" className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground">Create a short link</Link>
     </main>
   )
 }

@@ -13,20 +13,42 @@ const ADS = [
   { label: 'Sponsored story', title: 'Your best work starts here.', copy: 'A better digital toolkit for your everyday workflow.', accent: 'from-emerald-500 to-teal-600' },
 ]
 
-export function AdInterstitial({ destination }: { destination: string; slug: string }) {
+function adForSlug(slug: string) {
+  const hash = Array.from(slug).reduce((total, character) => total + character.charCodeAt(0), 0)
+  return ADS[hash % ADS.length]
+}
+
+export function AdInterstitial({ destination, slug }: { destination: string; slug: string }) {
   const [stage, setStage] = useState<1 | 2>(1)
   const [seconds, setSeconds] = useState(STAGE_ONE_SECONDS)
-  const [ad] = useState(() => ADS[Math.floor(Math.random() * ADS.length)])
+  const ad = adForSlug(slug)
+  const [adBlocker, setAdBlocker] = useState(false)
+  const [vpnDetected, setVpnDetected] = useState(false)
 
   const total = stage === 1 ? STAGE_ONE_SECONDS : STAGE_TWO_SECONDS
 
   useEffect(() => {
-    if (seconds <= 0) return
+    const bait = document.createElement('div')
+    bait.className = 'ad adsbox ad-banner'
+    bait.style.cssText = 'position:absolute;left:-10000px;width:1px;height:1px;'
+    document.body.appendChild(bait)
+    const check = () => { if (bait.offsetHeight === 0 || bait.offsetParent === null) setAdBlocker(true) }
+    const timer = window.setTimeout(check, 400)
+    return () => { window.clearTimeout(timer); bait.remove() }
+  }, [])
+
+  useEffect(() => {
+    fetch('/api/check-traffic').then((response) => response.json()).then((result) => setVpnDetected(Boolean(result.vpnDetected))).catch(() => undefined)
+  }, [])
+
+  useEffect(() => {
+    if (seconds <= 0 || adBlocker || vpnDetected) return
     const timer = window.setTimeout(() => setSeconds((value) => value - 1), 1000)
     return () => window.clearTimeout(timer)
   }, [seconds])
 
   function advance() {
+    if (adBlocker || vpnDetected) return
     if (stage === 1) {
       setStage(2)
       setSeconds(STAGE_TWO_SECONDS)
@@ -48,6 +70,8 @@ export function AdInterstitial({ destination }: { destination: string; slug: str
           <span className="flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs text-white/70"><ShieldCheck className="size-3.5 text-cyan-300" /> Secure passage</span>
         </header>
 
+        {adBlocker ? <div role="alert" className="mb-5 w-full rounded-2xl border border-red-400/40 bg-red-500/15 px-4 py-3 text-center text-sm font-semibold text-red-200">AdBlocker Detected! Please disable AdBlocker to continue to destination link.</div> : null}
+        {vpnDetected ? <div role="alert" className="mb-5 w-full rounded-2xl border border-amber-400/40 bg-amber-500/15 px-4 py-3 text-center text-sm font-semibold text-amber-100">VPN/Proxy connections are not allowed.</div> : null}
         <div className="mb-5 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-white/50"><span className="text-cyan-300">{stageLabel}</span><span>•</span><span>Preparing your destination</span></div>
 
         <section className="w-full rounded-[2rem] border border-white/10 bg-white/[0.08] p-7 text-center shadow-2xl shadow-black/30 backdrop-blur-xl sm:p-10">

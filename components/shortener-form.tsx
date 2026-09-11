@@ -19,7 +19,7 @@ export function ShortenerForm() {
     startTransition(async () => {
       const result = await createLink(new FormData(e.currentTarget))
       if (!result.ok) { setError(result.error); setShortUrl(null); return }
-      setShortUrl(`${window.location.origin}/${result.slug}`)
+      setShortUrl(result.shortUrl ?? `${window.location.origin}/${result.slug}`)
       router.refresh()
     })
   }
