@@ -6,9 +6,12 @@ export const user = pgTable("user", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
+  username: text("username").unique(),
   emailVerified: boolean("emailVerified").notNull().default(false),
   image: text("image"),
-  role: text("role").notNull().default("user"), // "user" | "admin"
+  role: text("role").notNull().default("user"),
+  balance: numeric("balance", { precision: 10, scale: 2 }).notNull().default("0.00"),
+  status: text("status").notNull().default("active"),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
   updatedAt: timestamp("updatedAt").notNull().defaultNow(),
 })
@@ -69,6 +72,26 @@ export const settings = pgTable("settings", {
   id: serial("id").primaryKey(),
   cpmRate: numeric("cpm_rate", { precision: 10, scale: 2 }).notNull().default("5.00"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+})
+
+export const payoutMethods = pgTable("payout_methods", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  method: text("method").notNull(),
+  accountDetails: text("account_details").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+})
+
+export const payoutRequests = pgTable("payout_requests", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
+  method: text("method").notNull(),
+  accountDetails: text("account_details").notNull(),
+  status: text("status").notNull().default("pending"),
+  rejectionReason: text("rejection_reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
 })
 
 export type Link = typeof links.$inferSelect

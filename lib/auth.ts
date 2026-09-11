@@ -39,7 +39,12 @@ export const auth = betterAuth({
         type: "string",
         required: false,
         defaultValue: "user",
-        input: false, // users cannot set their own role
+        input: false,
+      },
+      username: {
+        type: "string",
+        required: true,
+        unique: true,
       },
     },
   },
