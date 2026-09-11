@@ -22,6 +22,17 @@ function generateSlug(length = 6) {
   return slug
 }
 
+async function getAppOrigin() {
+  const configuredOrigin = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, '')
+  if (configuredOrigin) return configuredOrigin
+
+  const requestHeaders = await headers()
+  const host = requestHeaders.get('x-forwarded-host') ?? requestHeaders.get('host')
+  if (!host) return null
+  const protocol = requestHeaders.get('x-forwarded-proto')?.split(',')[0]?.trim() ?? 'https'
+  return `${protocol}://${host}`
+}
+
 function normalizeUrl(input: string): string | null {
   let value = input.trim()
   if (!value) return null
@@ -44,7 +55,7 @@ async function getUserId() {
 }
 
 export type CreateLinkResult =
-  | { ok: true; slug: string; originalUrl: string }
+  | { ok: true; slug: string; originalUrl: string; shortUrl: string | null }
   | { ok: false; error: string }
 
 export async function createLink(formData: FormData): Promise<CreateLinkResult> {
@@ -63,7 +74,8 @@ export async function createLink(formData: FormData): Promise<CreateLinkResult> 
         .insert(links)
         .values({ slug, originalUrl, userId })
         .returning({ slug: links.slug, originalUrl: links.originalUrl })
-      return { ok: true, slug: row.slug, originalUrl: row.originalUrl }
+      const origin = await getAppOrigin()
+      return { ok: true, slug: row.slug, originalUrl: row.originalUrl, shortUrl: origin ? `${origin}/${row.slug}` : null }
     } catch {
       // collision, retry
     }
