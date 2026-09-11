@@ -3,8 +3,8 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Sniplink — URL Shortener',
-  description: 'Shorten any link and share it. Fast, free URL shortening with click tracking.',
+  title: 'Sniplink — Every click, made meaningful',
+  description: 'Shorten links, understand your reach, and earn from qualified views with Sniplink.',
   generator: 'v0.app',
   icons: {
     icon: [

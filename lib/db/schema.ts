@@ -1,4 +1,4 @@
-import { boolean, integer, numeric, pgTable, serial, text, timestamp } from "drizzle-orm/pg-core"
+import { boolean, integer, numeric, pgTable, serial, text, timestamp, unique } from "drizzle-orm/pg-core"
 
 // ---------------- Better Auth tables ----------------
 
@@ -80,7 +80,9 @@ export const payoutMethods = pgTable("payout_methods", {
   method: text("method").notNull(),
   accountDetails: text("account_details").notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-})
+}, (table) => ({
+  userMethodUnique: unique("payout_methods_user_method_unique").on(table.userId, table.method),
+}))
 
 export const payoutRequests = pgTable("payout_requests", {
   id: serial("id").primaryKey(),

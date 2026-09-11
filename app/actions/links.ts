@@ -4,7 +4,8 @@ import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { links, settings, user, payoutMethods, payoutRequests } from '@/lib/db/schema'
 import { eq, desc, sql } from 'drizzle-orm'
-import { headers } from 'next/headers'
+import { headers, cookies } from 'next/headers'
+import { createHash } from 'node:crypto'
 
 const ALPHABET = 'abcdefghijkmnpqrstuvwxyz23456789'
 
@@ -60,6 +61,8 @@ export type CreateLinkResult =
 
 export async function createLink(formData: FormData): Promise<CreateLinkResult> {
   const userId = await getUserId()
+  if (!userId) return { ok: false, error: 'Please sign in before creating a short link.' }
+
   const raw = String(formData.get('url') ?? '')
   const originalUrl = normalizeUrl(raw)
 
@@ -118,9 +121,9 @@ export async function getUserEarnings() {
 }
 
 // Admin and owner functions
-export async function getAllUsers(ownerKey?: string) {
+export async function getAllUsers() {
   const session = await auth.api.getSession({ headers: await headers() })
-  if (ownerKey !== process.env.OWNER_SECRET_KEY && session?.user?.role !== 'admin') return null
+  if (!(await isOwner()) && session?.user?.role !== 'admin') return null
   const users = await db.select({ id: user.id, name: user.name, username: user.username, email: user.email, role: user.role, balance: user.balance, status: user.status, createdAt: user.createdAt }).from(user).orderBy(desc(user.createdAt))
   const allLinks = await db.select({ userId: links.userId, clicks: links.clicks }).from(links)
   const cpm = await getCPMRate()
@@ -136,18 +139,17 @@ export async function getAllLinks() {
   return db.select().from(links).orderBy(desc(links.createdAt))
 }
 
-export async function promoteUserToAdmin(targetUserId: string, ownerKey: string) {
+export async function promoteUserToAdmin(targetUserId: string) {
   const session = await auth.api.getSession({ headers: await headers() })
-  const isOwner = ownerKey === process.env.OWNER_SECRET_KEY
-  if (!isOwner && session?.user?.role !== 'admin') {
+  if (!(await isOwner()) && session?.user?.role !== 'admin') {
     return { ok: false, error: 'Unauthorized' }
   }
   await db.update(user).set({ role: 'admin' }).where(eq(user.id, targetUserId))
   return { ok: true }
 }
 
-export async function updateCPMRate(newRate: number, ownerKey: string) {
-  if (!ownerKey || ownerKey !== process.env.OWNER_SECRET_KEY || !Number.isFinite(newRate) || newRate < 0) {
+export async function updateCPMRate(newRate: number) {
+  if (!(await isOwner()) || !Number.isFinite(newRate) || newRate < 0) {
     return { ok: false, error: 'Invalid owner key or rate' }
   }
 
@@ -155,9 +157,18 @@ export async function updateCPMRate(newRate: number, ownerKey: string) {
   return { ok: true }
 }
 
+function ownerToken() {
+  return createHash('sha256').update(process.env.OWNER_SECRET_KEY ?? '').digest('hex')
+}
+
+async function isOwner() {
+  return (await cookies()).get('sniplink_owner')?.value === ownerToken()
+}
+
 export async function verifyOwnerKey(key: string) {
-  if (key === process.env.OWNER_SECRET_KEY) return { ok: true }
-  return { ok: false, error: 'Invalid owner key' }
+  if (!key || key !== process.env.OWNER_SECRET_KEY) return { ok: false, error: 'Invalid owner key' }
+  ;(await cookies()).set('sniplink_owner', ownerToken(), { httpOnly: true, secure: true, sameSite: 'strict', path: '/', maxAge: 60 * 60 * 8 })
+  return { ok: true }
 }
 
 const validMethods = ['JazzCash', 'EasyPaisa', 'Bank Transfer', 'USDT'] as const
@@ -171,13 +182,12 @@ export async function savePayoutMethod(method: string, accountDetails: string) {
 
 export async function requestWithdrawal(amount: number, method: string, accountDetails: string) {
   const userId = await getUserId()
-  if (!userId || amount < 5 || !Number.isFinite(amount) || !validMethods.includes(method as typeof validMethods[number])) return { ok: false, error: 'Minimum withdrawal is $5 and payout details are required.' }
+  const details = accountDetails.trim()
+  if (!userId || !Number.isFinite(amount) || amount < 5 || amount > 100000 || !validMethods.includes(method as typeof validMethods[number]) || details.length < 4 || details.length > 300) return { ok: false, error: 'Enter a valid payout method, account detail, and amount of at least $5.' }
   const result = await db.transaction(async (tx) => {
-    const [account] = await tx.select({ balance: user.balance }).from(user).where(eq(user.id, userId)).limit(1)
-    const balance = Number(account?.balance ?? 0)
-    if (balance < amount) return false
-    await tx.update(user).set({ balance: sql`${user.balance} - ${amount}` }).where(eq(user.id, userId))
-    await tx.insert(payoutRequests).values({ userId, amount: amount.toFixed(2), method, accountDetails: accountDetails.trim() })
+    const updated = await tx.update(user).set({ balance: sql`${user.balance} - ${amount.toFixed(2)}` }).where(sql`${user.id} = ${userId} AND ${user.status} = 'active' AND ${user.balance} >= ${amount.toFixed(2)}`).returning({ id: user.id })
+    if (updated.length === 0) return false
+    await tx.insert(payoutRequests).values({ userId, amount: amount.toFixed(2), method, accountDetails: details })
     return true
   })
   return result ? { ok: true } : { ok: false, error: 'Insufficient available balance.' }
@@ -192,13 +202,13 @@ export async function getUserPayoutData() {
   return { balance: Number(account?.balance ?? 0), methods, requests }
 }
 
-export async function getOwnerPayoutData(ownerKey: string) {
-  if (ownerKey !== process.env.OWNER_SECRET_KEY) return null
+export async function getOwnerPayoutData() {
+  if (!(await isOwner())) return null
   return db.select({ request: payoutRequests, name: user.name, username: user.username, email: user.email }).from(payoutRequests).innerJoin(user, eq(payoutRequests.userId, user.id)).where(eq(payoutRequests.status, 'pending')).orderBy(desc(payoutRequests.createdAt))
 }
 
-export async function reviewPayout(requestId: number, decision: 'approved' | 'rejected', reason = '', ownerKey: string) {
-  if (ownerKey !== process.env.OWNER_SECRET_KEY) return { ok: false, error: 'Unauthorized' }
+export async function reviewPayout(requestId: number, decision: 'approved' | 'rejected', reason = '') {
+  if (!(await isOwner())) return { ok: false, error: 'Unauthorized' }
   const result = await db.transaction(async (tx) => {
     const [request] = await tx.select().from(payoutRequests).where(eq(payoutRequests.id, requestId)).limit(1)
     if (!request || request.status !== 'pending') return false
