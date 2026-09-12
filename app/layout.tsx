@@ -23,6 +23,9 @@ export const metadata: Metadata = {
     ],
     apple: '/apple-icon.png',
   },
+  other: {
+    monetag: '4a68acca34e8c744250872791fca1800',
+  },
 }
 
 export const viewport: Viewport = {
