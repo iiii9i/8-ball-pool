@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Script from 'next/script'
 import { Button } from '@/components/ui/button'
 import { completeView } from '@/app/actions/links'
 import { ArrowRight, CheckCircle2, ShieldCheck } from 'lucide-react'
@@ -25,6 +26,7 @@ export function AdInterstitial({ destination, slug }: { destination: string; slu
   const ad = adForSlug(slug)
   const [adBlocker, setAdBlocker] = useState(false)
   const [vpnDetected, setVpnDetected] = useState(false)
+  const [adTriggered, setAdTriggered] = useState(false)
 
   const total = stage === 1 ? STAGE_ONE_SECONDS : STAGE_TWO_SECONDS
 
@@ -56,6 +58,11 @@ export function AdInterstitial({ destination, slug }: { destination: string; slu
       window.scrollTo({ top: 0, behavior: 'smooth' })
       return
     }
+    if (!adTriggered) {
+      setAdTriggered(true)
+      window.dispatchEvent(new CustomEvent('sniplink:monetag-open'))
+      return
+    }
     await completeView(slug)
     window.location.assign(destination)
   }
@@ -65,6 +72,9 @@ export function AdInterstitial({ destination, slug }: { destination: string; slu
   const stageLabel = stage === 1 ? 'Step 1 of 2' : 'Final step'
 
   return (
+    <>
+      <Script src="https://quge5.com/88/tag.min.js" data-zone="279283" data-cfasync="false" strategy="afterInteractive" />
+      <Script src="https://quge5.com/88/tag.min.js" data-zone="279284" data-cfasync="false" strategy="afterInteractive" />
     <main className="min-h-dvh bg-[radial-gradient(circle_at_top,_rgba(99,102,241,0.22),_transparent_40%),linear-gradient(145deg,#090b17,#10162a)] px-4 py-8 text-white sm:px-6 sm:py-14">
       <div className="mx-auto flex w-full max-w-xl flex-col items-center">
         <header className="mb-8 flex w-full items-center justify-between">
@@ -98,11 +108,12 @@ export function AdInterstitial({ destination, slug }: { destination: string; slu
           </div>
         </section>
 
-        <Button onClick={advance} disabled={!ready} size="lg" className="mt-6 h-14 w-full rounded-2xl bg-cyan-300 text-slate-950 shadow-lg shadow-cyan-500/20 hover:bg-cyan-200 disabled:bg-white/15 disabled:text-white/45 sm:w-auto sm:min-w-72">
-          {ready ? <>{stage === 1 ? 'Continue to final step' : 'Continue to destination'} <ArrowRight className="size-4" /></> : <>Please wait {seconds}s</>}
+        <Button onClick={advance} disabled={!ready} size="lg" className={`mt-6 h-14 w-full rounded-2xl bg-cyan-300 ${adTriggered ? 'animate-pulse ring-4 ring-cyan-200/50' : ''} text-slate-950 shadow-lg shadow-cyan-500/20 hover:bg-cyan-200 disabled:bg-white/15 disabled:text-white/45 sm:w-auto sm:min-w-72`}>
+          {ready ? <>{stage === 1 ? 'Continue to final step' : adTriggered ? 'Click again to open destination' : 'Continue to destination'} <ArrowRight className="size-4" /></> : <>Please wait {seconds}s</>}
         </Button>
         <p className="mt-5 flex items-center gap-2 text-center text-xs text-white/40"><CheckCircle2 className="size-3.5" /> Destination hidden until the final step is complete.</p>
       </div>
     </main>
+    </>
   )
 }
