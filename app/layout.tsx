@@ -6,7 +6,6 @@ export const metadata: Metadata = {
   title: 'Sniplink — Every click, made meaningful',
   description: 'Shorten links, understand your reach, and earn from qualified views with Sniplink.',
   generator: 'v0.app',
-  other: { monetag: '4a68acca34e8c744250872791fca1800' },
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'https://skipit-ten.vercel.app'),
   icons: {
     icon: [

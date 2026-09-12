@@ -134,9 +134,15 @@ export async function createSupportTicket(subject: string, message: string) {
   const cleanSubject = subject.trim().slice(0, 160)
   const cleanMessage = message.trim().slice(0, 5000)
   if (!userId || cleanSubject.length < 3 || cleanMessage.length < 3) return { ok: false, error: 'Subject and message are required.' }
-  const [ticket] = await db.insert(supportTickets).values({ userId, subject: cleanSubject }).returning({ id: supportTickets.id })
-  await db.insert(ticketMessages).values({ ticketId: ticket.id, senderRole: 'user', message: cleanMessage })
-  return { ok: true, id: ticket.id }
+  try {
+    const [ticket] = await db.insert(supportTickets).values({ userId, subject: cleanSubject }).returning({ id: supportTickets.id })
+    if (!ticket) return { ok: false, error: 'Support is temporarily unavailable.' }
+    await db.insert(ticketMessages).values({ ticketId: ticket.id, senderRole: 'user', message: cleanMessage })
+    return { ok: true, id: ticket.id }
+  } catch (error) {
+    console.error('[v0] Support ticket creation failed:', error)
+    return { ok: false, error: 'Support is temporarily unavailable. Please try again.' }
+  }
 }
 
 export async function getUserSupportTickets() {
@@ -160,9 +166,14 @@ export async function replyToSupportTicket(ticketId: number, message: string) {
   if (!userId || clean.length < 2) return { ok: false, error: 'Message is required.' }
   const [ticket] = await db.select({ id: supportTickets.id }).from(supportTickets).where(sql`${supportTickets.id} = ${ticketId} AND ${supportTickets.userId} = ${userId}`).limit(1)
   if (!ticket) return { ok: false, error: 'Ticket not found.' }
-  await db.insert(ticketMessages).values({ ticketId, senderRole: 'user', message: clean })
-  await db.update(supportTickets).set({ status: 'open', updatedAt: new Date() }).where(eq(supportTickets.id, ticketId))
-  return { ok: true }
+  try {
+    await db.insert(ticketMessages).values({ ticketId, senderRole: 'user', message: clean })
+    await db.update(supportTickets).set({ status: 'open', updatedAt: new Date() }).where(eq(supportTickets.id, ticketId))
+    return { ok: true }
+  } catch (error) {
+    console.error('[v0] Support reply failed:', error)
+    return { ok: false, error: 'Could not send your reply. Please try again.' }
+  }
 }
 
 // Admin and owner functions
