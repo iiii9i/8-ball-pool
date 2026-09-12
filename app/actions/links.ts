@@ -2,7 +2,7 @@
 
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { links, linkViews, settings, user, payoutMethods, withdrawalRequests } from '@/lib/db/schema'
+import { links, linkViews, settings, user, payoutMethods, withdrawalRequests, supportTickets, ticketMessages } from '@/lib/db/schema'
 import { eq, desc, sql } from 'drizzle-orm'
 import { headers, cookies } from 'next/headers'
 import { createHash } from 'node:crypto'
@@ -129,6 +129,42 @@ export async function getUserEarnings() {
   return { totalClicks: totalViews, earnings, cpm, linkCount: userLinks.length }
 }
 
+export async function createSupportTicket(subject: string, message: string) {
+  const userId = await getUserId()
+  const cleanSubject = subject.trim().slice(0, 160)
+  const cleanMessage = message.trim().slice(0, 5000)
+  if (!userId || cleanSubject.length < 3 || cleanMessage.length < 3) return { ok: false, error: 'Subject and message are required.' }
+  const [ticket] = await db.insert(supportTickets).values({ userId, subject: cleanSubject }).returning({ id: supportTickets.id })
+  await db.insert(ticketMessages).values({ ticketId: ticket.id, senderRole: 'user', message: cleanMessage })
+  return { ok: true, id: ticket.id }
+}
+
+export async function getUserSupportTickets() {
+  const userId = await getUserId()
+  if (!userId) return []
+  return db.select().from(supportTickets).where(eq(supportTickets.userId, userId)).orderBy(desc(supportTickets.updatedAt))
+}
+
+export async function getSupportTicket(ticketId: number) {
+  const userId = await getUserId()
+  if (!userId) return null
+  const [ticket] = await db.select().from(supportTickets).where(sql`${supportTickets.id} = ${ticketId} AND ${supportTickets.userId} = ${userId}`).limit(1)
+  if (!ticket) return null
+  const messages = await db.select().from(ticketMessages).where(eq(ticketMessages.ticketId, ticketId)).orderBy(ticketMessages.createdAt)
+  return { ticket, messages }
+}
+
+export async function replyToSupportTicket(ticketId: number, message: string) {
+  const userId = await getUserId()
+  const clean = message.trim().slice(0, 5000)
+  if (!userId || clean.length < 2) return { ok: false, error: 'Message is required.' }
+  const [ticket] = await db.select({ id: supportTickets.id }).from(supportTickets).where(sql`${supportTickets.id} = ${ticketId} AND ${supportTickets.userId} = ${userId}`).limit(1)
+  if (!ticket) return { ok: false, error: 'Ticket not found.' }
+  await db.insert(ticketMessages).values({ ticketId, senderRole: 'user', message: clean })
+  await db.update(supportTickets).set({ status: 'open', updatedAt: new Date() }).where(eq(supportTickets.id, ticketId))
+  return { ok: true }
+}
+
 // Admin and owner functions
 export async function getAllUsers() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -193,7 +229,7 @@ export async function savePayoutMethod(method: string, accountDetails: string) {
 export async function requestWithdrawal(amount: number, method: string, accountDetails: string) {
   const userId = await getUserId()
   const details = accountDetails.trim()
-  if (!userId || !Number.isFinite(amount) || amount < 5 || amount > 100000 || !validMethods.includes(method as typeof validMethods[number]) || details.length < 4 || details.length > 300) return { ok: false, error: 'Enter a valid payout method, account detail, and amount of at least $5.' }
+  if (!userId || !Number.isFinite(amount) || amount < 10 || amount > 100000 || !validMethods.includes(method as typeof validMethods[number]) || details.length < 4 || details.length > 300) return { ok: false, error: 'Enter a valid payout method, account detail, and amount of at least $10.' }
   const result = await db.transaction(async (tx) => {
     const [account] = await tx.select({ id: user.id }).from(user).where(eq(user.id, userId)).for('update').limit(1)
     if (!account) return false

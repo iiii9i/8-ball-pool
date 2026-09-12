@@ -105,5 +105,24 @@ export const withdrawalRequests = pgTable("WithdrawalRequest", {
   reviewedAt: timestamp("reviewedAt", { withTimezone: true }),
 })
 
+export const supportTickets = pgTable("support_tickets", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  subject: text("subject").notNull(),
+  category: text("category").notNull().default("general"),
+  status: text("status").notNull().default("open"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+})
+
+export const ticketMessages = pgTable("ticket_messages", {
+  id: serial("id").primaryKey(),
+  ticketId: integer("ticket_id").notNull().references(() => supportTickets.id, { onDelete: "cascade" }),
+  senderRole: text("sender_role").notNull(),
+  message: text("message").notNull(),
+  readAt: timestamp("read_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+})
+
 export type Link = typeof links.$inferSelect
 export type User = typeof user.$inferSelect
