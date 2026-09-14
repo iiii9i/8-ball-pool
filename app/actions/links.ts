@@ -2,8 +2,8 @@
 
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { links, linkViews, settings, user, payoutMethods, withdrawalRequests, supportTickets, ticketMessages } from '@/lib/db/schema'
-import { eq, desc, sql } from 'drizzle-orm'
+import { links, linkViews, settings, user, payoutMethods, withdrawalRequests, supportTickets, ticketMessages, countryRates } from '@/lib/db/schema'
+import { and, eq, desc, sql, gte } from 'drizzle-orm'
 import { headers, cookies } from 'next/headers'
 import { createHash } from 'node:crypto'
 
@@ -95,13 +95,22 @@ export async function getLinkBySlug(slug: string) {
 export async function completeView(slug: string) {
   const [link] = await db.select({ id: links.id }).from(links).where(eq(links.slug, slug)).limit(1)
   if (!link) return { ok: false as const }
+  const requestHeaders = await headers()
+  const ipAddress = requestHeaders.get('x-forwarded-for')?.split(',')[0]?.trim() ?? requestHeaders.get('x-real-ip') ?? 'unknown'
+  const countryCode = (requestHeaders.get('x-vercel-ip-country') ?? requestHeaders.get('cf-ipcountry') ?? 'XX').toUpperCase()
+  const [rate] = await db.select({ rawEcpm: countryRates.rawEcpm }).from(countryRates).where(eq(countryRates.countryCode, countryCode)).limit(1)
+  const [fallback] = await db.select({ rawEcpm: countryRates.rawEcpm }).from(countryRates).where(eq(countryRates.isFallback, true)).limit(1)
+  const rawEcpm = Number(rate?.rawEcpm ?? fallback?.rawEcpm ?? 1)
+  const completedAt = new Date()
+  const recentIp = ipAddress === 'unknown' ? [] : await db.select({ id: linkViews.id }).from(linkViews).where(and(eq(linkViews.linkId, link.id), eq(linkViews.ipAddress, ipAddress), gte(linkViews.completedAt, new Date(Date.now() - 24 * 60 * 60 * 1000)))).limit(1)
+  if (recentIp.length) return { ok: true as const, counted: false }
   const jar = await cookies()
   let visitorKey = jar.get('sniplink_visitor')?.value
   if (!visitorKey) {
     visitorKey = crypto.randomUUID()
     jar.set('sniplink_visitor', visitorKey, { httpOnly: true, secure: true, sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24 * 365 })
   }
-  const inserted = await db.insert(linkViews).values({ linkId: link.id, visitorKey }).onConflictDoNothing().returning({ id: linkViews.id })
+  const inserted = await db.insert(linkViews).values({ linkId: link.id, visitorKey, countryCode, rawEcpm: rawEcpm.toFixed(2), publisherEarnings: (rawEcpm * 0.6 / 1000).toFixed(4), ipAddress, suspicious: ipAddress === 'unknown' }).onConflictDoNothing().returning({ id: linkViews.id })
   if (inserted.length) await db.update(links).set({ clicks: sql`${links.clicks} + 1` }).where(eq(links.id, link.id))
   return { ok: true as const, counted: inserted.length > 0 }
 }
@@ -121,12 +130,13 @@ export async function getCPMRate() {
 export async function getUserEarnings() {
   const userId = await getUserId()
   if (!userId) return null
-  const views = await db.select({ id: linkViews.id }).from(linkViews).innerJoin(links, eq(linkViews.linkId, links.id)).where(eq(links.userId, userId))
+  const views = await db.select({ publisherEarnings: linkViews.publisherEarnings, rawEcpm: linkViews.rawEcpm, countryCode: linkViews.countryCode }).from(linkViews).innerJoin(links, eq(linkViews.linkId, links.id)).where(eq(links.userId, userId))
   const userLinks = await db.select({ id: links.id }).from(links).where(eq(links.userId, userId))
-  const cpm = await getCPMRate()
   const totalViews = views.length
-  const earnings = (totalViews / 1000) * cpm
-  return { totalClicks: totalViews, earnings, cpm, linkCount: userLinks.length }
+  const earnings = views.reduce((total, view) => total + Number(view.publisherEarnings), 0)
+  const averageCpm = totalViews ? views.reduce((total, view) => total + Number(view.rawEcpm) * 0.6, 0) / totalViews : 0
+  const countryBreakdown = Object.entries(views.reduce<Record<string, { clicks: number; earnings: number; cpm: number }>>((result, view) => { const item = result[view.countryCode] ?? { clicks: 0, earnings: 0, cpm: 0 }; item.clicks += 1; item.earnings += Number(view.publisherEarnings); item.cpm += Number(view.rawEcpm) * 0.6; result[view.countryCode] = item; return result }, {})).map(([countryCode, item]) => ({ countryCode, clicks: item.clicks, earnings: item.earnings, averageCpm: item.cpm / item.clicks }))
+  return { totalClicks: totalViews, earnings, cpm: averageCpm, linkCount: userLinks.length, countryBreakdown }
 }
 
 export async function createSupportTicket(subject: string, message: string) {

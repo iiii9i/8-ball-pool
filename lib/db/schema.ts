@@ -73,13 +73,31 @@ export const linkViews = pgTable("link_views", {
   linkId: integer("link_id").notNull().references(() => links.id, { onDelete: "cascade" }),
   visitorKey: text("visitor_key").notNull(),
   completedAt: timestamp("completed_at", { withTimezone: true }).notNull().defaultNow(),
+  countryCode: text("country_code").notNull().default("XX"),
+  rawEcpm: numeric("raw_ecpm", { precision: 10, scale: 2 }).notNull().default("1.00"),
+  publisherEarnings: numeric("publisher_earnings", { precision: 10, scale: 4 }).notNull().default("0.0000"),
+  ipAddress: text("ip_address"),
+  suspicious: boolean("suspicious").notNull().default(false),
 }, (table) => ({
   linkVisitorUnique: unique("link_views_link_visitor_unique").on(table.linkId, table.visitorKey),
 }))
 
+export const countryRates = pgTable("country_rates", {
+  id: serial("id").primaryKey(),
+  countryCode: text("country_code").notNull().unique(),
+  countryName: text("country_name").notNull(),
+  rawEcpm: numeric("raw_ecpm", { precision: 10, scale: 2 }).notNull(),
+  isFallback: boolean("is_fallback").notNull().default(false),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+})
+
 export const settings = pgTable("settings", {
   id: serial("id").primaryKey(),
   cpmRate: numeric("cpm_rate", { precision: 10, scale: 2 }).notNull().default("3.00"),
+  minimumWithdrawal: numeric("minimum_withdrawal", { precision: 10, scale: 2 }).notNull().default("10.00"),
+  maintenanceMode: boolean("maintenance_mode").notNull().default(false),
+  announcement: text("announcement"),
+  dedupHours: integer("dedup_hours").notNull().default(24),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 })
 
