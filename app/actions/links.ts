@@ -122,6 +122,16 @@ export async function getUserLinks() {
   return db.select().from(links).where(eq(links.userId, userId)).orderBy(desc(links.createdAt))
 }
 
+export async function getUserLinkAnalytics(linkId: number) {
+  const userId = await getUserId()
+  if (!userId) return null
+  const [link] = await db.select({ id: links.id, slug: links.slug, originalUrl: links.originalUrl, clicks: links.clicks }).from(links).where(and(eq(links.id, linkId), eq(links.userId, userId))).limit(1)
+  if (!link) return null
+  const views = await db.select({ countryCode: linkViews.countryCode, rawEcpm: linkViews.rawEcpm, publisherEarnings: linkViews.publisherEarnings }).from(linkViews).where(eq(linkViews.linkId, linkId))
+  const breakdown = Object.entries(views.reduce<Record<string, { clicks: number; rawEcpm: number; earnings: number }>>((result, view) => { const item = result[view.countryCode] ?? { clicks: 0, rawEcpm: 0, earnings: 0 }; item.clicks += 1; item.rawEcpm += Number(view.rawEcpm); item.earnings += Number(view.publisherEarnings); result[view.countryCode] = item; return result }, {})).map(([countryCode, item]) => ({ countryCode, clicks: item.clicks, ecpm: (item.rawEcpm * 0.6) / item.clicks, earnings: item.earnings }))
+  return { link, breakdown }
+}
+
 export async function getCPMRate() {
   const [row] = await db.select({ cpmRate: settings.cpmRate }).from(settings).where(eq(settings.id, 1)).limit(1)
   return row ? Number(row.cpmRate) : 3
@@ -159,6 +169,18 @@ export async function getUserSupportTickets() {
   const userId = await getUserId()
   if (!userId) return []
   return db.select().from(supportTickets).where(eq(supportTickets.userId, userId)).orderBy(desc(supportTickets.updatedAt))
+}
+
+export async function archiveSupportTicket(ticketId: number) {
+  const userId = await getUserId()
+  if (!userId) return { ok: false, error: 'Please sign in again.' }
+  try {
+    const result = await db.update(supportTickets).set({ status: 'closed', updatedAt: new Date() }).where(and(eq(supportTickets.id, ticketId), eq(supportTickets.userId, userId))).returning({ id: supportTickets.id })
+    return result.length ? { ok: true } : { ok: false, error: 'Ticket not found.' }
+  } catch (error) {
+    console.error('[v0] Support ticket archive failed:', error)
+    return { ok: false, error: 'Could not archive this ticket.' }
+  }
 }
 
 export async function getSupportTicket(ticketId: number) {
